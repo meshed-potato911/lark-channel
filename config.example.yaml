@@ -1,0 +1,52 @@
+# lark-channel configuration
+# Copy this file to config.yaml and customize for your setup.
+
+settings:
+  # How long to keep an Agent session alive before starting fresh
+  session_ttl: 7d
+  # Maximum number of concurrent Agent sessions (one per active group)
+  max_concurrent: 10
+  # Default Claude model for Agent queries
+  default_model: claude-sonnet-4-6
+  # Python executable for Agent SDK worker
+  python: python3
+
+access:
+  # "open" accepts messages from anyone in configured groups
+  # "allowlist" only accepts messages from senders in allowed_senders
+  policy: open
+  allowed_senders: []
+
+groups:
+  # Each entry maps a Feishu group chat to an Agent persona.
+  # The Agent gets its own isolated session with persistent context.
+
+  - chat_id: oc_YOUR_CHAT_ID_HERE
+    name: my-project
+    # Working directory for the Agent (where it can read/write code)
+    cwd: ~/repos/my-project
+    # Agent persona injected as system prompt appendix
+    persona: |
+      You are the maintainer agent for org/my-project.
+      Use `gh` CLI for GitHub operations. Reply in the user's language.
+      Keep replies concise for chat readability.
+    # Permission mode: default | acceptEdits | bypassPermissions
+    permission_mode: default
+    # Optional scheduled tasks (cron in local timezone)
+    # schedule:
+    #   - cron: "0 9 * * 1-5"
+    #     prompt: "Check for stale PRs (>3 days), unanswered issues, failing CI. Post a digest."
+
+  # -- shareAI-lab example routes --
+
+  # - chat_id: oc_84f7f942e8067a61dd61a434fc92ef6a
+  #   name: learn-claude-code
+  #   cwd: ~/repos/learn-claude-code
+  #   persona: |
+  #     You are the maintainer agent for shareAI-lab/learn-claude-code.
+  #     TypeScript educational repo (44k+ stars) teaching agent harness development.
+  #     Use gh CLI for issues/PRs. Reply in the user's language.
+  #   permission_mode: default
+  #   schedule:
+  #     - cron: "0 9 * * 1-5"
+  #       prompt: "Check for stale PRs (>3 days), unanswered issues, and failing CI. Post a digest."
